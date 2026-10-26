@@ -1,0 +1,202 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+set -f
+umask 077
+
+. /lib/functions.sh
+
+WG_STATE=/var/run/webrtc-guard
+WG_TMP=
+WG_INTERFACES=
+WG_PORTS=
+WG_ALLOW=
+WG_ERROR=
+WG_COUNT=0
+
+fail() {
+	printf '%s\n' "$*" >&2
+	mkdir -p "$WG_STATE"
+	printf '%s\n' "$*" >"$WG_STATE/error.new"
+	mv -f "$WG_STATE/error.new" "$WG_STATE/error"
+	logger -t webrtc-guard -p daemon.err -- "$*"
+	return 1
+}
+
+load_settings() {
+	config_load webrtc-guard
+	config_get WG_ENABLED main enabled 0
+	config_get WG_MODE main mode balanced
+}
+
+add_interface() {
+	local device="$1"
+	WG_COUNT=$((WG_COUNT + 1))
+	case "$device" in
+		''|*[!a-zA-Z0-9_.:@-]*) WG_ERROR='受控接口名称无效。'; return ;;
+	esac
+	if [ "${#device}" -gt 15 ] || [ "$WG_COUNT" -gt 32 ]; then
+		WG_ERROR='接口名称过长，或接口超过 32 个。'
+		return
+	fi
+	if ! ip link show dev "$device" >/dev/null 2>&1; then
+		WG_ERROR="接口 $device 不存在；请检查受控入口接口。"
+		return
+	fi
+	WG_INTERFACES="${WG_INTERFACES:+$WG_INTERFACES, }\"$device\""
+}
+
+valid_number() {
+	case "$1" in
+		''|0*|*[!0-9]*) return 1 ;;
+	esac
+	[ "${#1}" -le 5 ] && [ "$1" -le 65535 ]
+}
+
+add_port() {
+	local port="$1" target="$2" first last
+	WG_COUNT=$((WG_COUNT + 1))
+	case "$port" in
+		*-*)
+			first="${port%%-*}"
+			last="${port#*-}"
+			if ! valid_number "$first" || ! valid_number "$last" || [ "$first" -gt "$last" ]; then
+				WG_ERROR='端口范围无效；请填写 1–65535 内的数字或升序范围。'
+				return
+			fi
+			;;
+		*)
+			if ! valid_number "$port"; then
+				WG_ERROR='端口无效；请填写 1–65535 内的数字。'
+				return
+			fi
+			;;
+	esac
+	if [ "$WG_COUNT" -gt 128 ]; then
+		WG_ERROR='每个端口列表最多允许 128 项。'
+		return
+	fi
+	case "$target" in
+		blocked) WG_PORTS="${WG_PORTS:+$WG_PORTS, }$port" ;;
+		allowed) WG_ALLOW="${WG_ALLOW:+$WG_ALLOW, }$port" ;;
+	esac
+}
+
+check_offload() {
+	local software hardware
+	config_get_bool software "$1" flow_offloading 0
+	config_get_bool hardware "$1" flow_offloading_hw 0
+	if [ "$software" = 1 ] || [ "$hardware" = 1 ]; then
+		WG_ERROR='请先在“网络 → 防火墙”关闭软件和硬件流量卸载，再应用防护规则。'
+	fi
+}
+
+validate_settings() {
+	case "$WG_ENABLED" in 0|1) ;; *) fail '启用开关必须为 0 或 1。'; return 1 ;; esac
+	case "$WG_MODE" in balanced|strict) ;; *) fail '不支持的防护模式。'; return 1 ;; esac
+	WG_COUNT=0
+	config_list_foreach main interfaces add_interface
+	[ -n "$WG_INTERFACES" ] || WG_ERROR='请至少选择一个受控入口接口。'
+	WG_COUNT=0
+	config_list_foreach main blocked_ports add_port blocked
+	WG_COUNT=0
+	config_list_foreach main udp_allow_ports add_port allowed
+	[ -z "$WG_ERROR" ] || { fail "$WG_ERROR"; return 1; }
+	config_load firewall
+	config_foreach check_offload defaults
+	[ -z "$WG_ERROR" ] || { fail "$WG_ERROR"; return 1; }
+}
+
+render_rules() {
+	cat <<EOF
+table inet webrtc_guard
+flush table inet webrtc_guard
+table inet webrtc_guard {
+	chain guard_prerouting {
+		type filter hook prerouting priority -310; policy accept;
+		iifname != { $WG_INTERFACES } return
+		meta l4proto udp udp length >= 28 @th,64,16 & 0xc000 == 0 @th,96,32 0x2112a442 counter drop comment "WebRTC Guard: STUN UDP"
+EOF
+	if [ -n "$WG_PORTS" ]; then
+		printf '\t\tmeta l4proto udp udp dport { %s } counter drop comment "WebRTC Guard: UDP ports"\n' "$WG_PORTS"
+		printf '\t\tmeta l4proto tcp tcp dport { %s } counter drop comment "WebRTC Guard: TCP ports"\n' "$WG_PORTS"
+	fi
+	if [ "$WG_MODE" = strict ]; then
+		if [ -n "$WG_ALLOW" ]; then
+			printf '\t\tmeta l4proto udp udp dport { %s } return\n' "$WG_ALLOW"
+		fi
+		printf '\t\tmeta l4proto udp counter drop comment "WebRTC Guard: strict UDP"\n'
+	fi
+	printf '\t}\n}\n'
+}
+
+stop_rules() {
+	if ! nft list tables >/dev/null 2>&1; then
+		fail '无法读取 nftables，未能确认防护规则是否已移除。'
+		return 1
+	fi
+	if nft list table inet webrtc_guard >/dev/null 2>&1; then
+		nft delete table inet webrtc_guard || { fail '移除防护规则失败。'; return 1; }
+	fi
+	rm -f "$WG_STATE/error"
+}
+
+apply_rules() {
+	local ruleset
+	load_settings
+	case "$WG_ENABLED" in
+		0) stop_rules; return $? ;;
+		1) ;;
+		*) fail '启用开关必须为 0 或 1。'; return 1 ;;
+	esac
+	validate_settings || return 1
+	ruleset="$(nft list ruleset 2>&1)" || { fail "无法读取 nftables：$ruleset"; return 1; }
+	if printf '%s\n' "$ruleset" | grep -Eq '(^|[[:space:]])flowtable[[:space:]]'; then
+		fail '检测到仍在运行的 nftables flowtable；请关闭流量卸载并重载防火墙后重试。'
+		return 1
+	fi
+	WG_TMP="$(mktemp "$WG_STATE/rules.XXXXXX")" || return 1
+	render_rules >"$WG_TMP"
+	if ! nft -c -f "$WG_TMP" >"$WG_TMP.log" 2>&1; then
+		fail "规则检查失败，保留上一版规则：$(cat "$WG_TMP.log")"
+		return 1
+	fi
+	# Creation/flush/replacement are a single nftables transaction.
+	if ! nft -f "$WG_TMP" >"$WG_TMP.log" 2>&1; then
+		fail "规则应用失败，保留上一版规则：$(cat "$WG_TMP.log")"
+		return 1
+	fi
+	rm -f "$WG_STATE/error"
+	logger -t webrtc-guard -p daemon.notice -- "Applied mode=$WG_MODE"
+}
+
+show_status() {
+	local active=0 rules='' error=''
+	load_settings
+	if rules="$(nft list table inet webrtc_guard 2>/dev/null)"; then active=1; fi
+	[ ! -f "$WG_STATE/error" ] || error="$(cat "$WG_STATE/error")"
+	. /usr/share/libubox/jshn.sh
+	json_init
+	json_add_boolean configured "$([ "$WG_ENABLED" = 1 ] && printf 1 || printf 0)"
+	json_add_boolean active "$active"
+	json_add_string mode "$WG_MODE"
+	json_add_string error "$error"
+	json_add_string rules "$rules"
+	json_dump
+}
+
+case "${1:-apply}" in
+	status) show_status ;;
+	apply|stop|render)
+		mkdir -p "$WG_STATE" /var/lock
+		exec 9>/var/lock/webrtc-guard.lock
+		flock -w 15 9 || { printf '%s\n' '另一个防护操作仍在进行，请稍后重试。' >&2; exit 1; }
+		trap '[ -z "$WG_TMP" ] || rm -f "$WG_TMP" "$WG_TMP.log"' EXIT
+		trap 'exit 1' HUP INT TERM
+		case "${1:-apply}" in
+			apply) apply_rules ;;
+			stop) stop_rules ;;
+			render) load_settings; validate_settings && render_rules ;;
+		esac
+		;;
+	*) printf 'Usage: %s [apply|stop|status|render]\n' "$0" >&2; exit 2 ;;
+esac

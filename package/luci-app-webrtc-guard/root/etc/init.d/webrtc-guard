@@ -1,0 +1,26 @@
+#!/bin/sh /etc/rc.common
+# SPDX-License-Identifier: GPL-2.0-only
+# rc.common reads these service metadata variables.
+# shellcheck disable=SC2034
+START=95
+# shellcheck disable=SC2034
+STOP=15
+# shellcheck disable=SC2034
+USE_PROCD=1
+
+start_service() {
+	/usr/libexec/webrtc-guard apply
+}
+
+reload_service() {
+	/usr/libexec/webrtc-guard apply
+}
+
+stop_service() {
+	/usr/libexec/webrtc-guard stop
+}
+
+service_triggers() {
+	procd_add_reload_trigger 'webrtc-guard' 'firewall'
+	procd_add_raw_trigger 'interface.*' 1000 /usr/libexec/webrtc-guard apply
+}

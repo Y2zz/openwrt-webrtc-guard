@@ -1,0 +1,10 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+# Idempotent registration; do not alter existing firewall policy or offload settings.
+uci -q batch <<'EOF'
+set firewall.webrtc_guard=include
+set firewall.webrtc_guard.type='script'
+set firewall.webrtc_guard.path='/usr/libexec/webrtc-guard'
+set firewall.webrtc_guard.fw4_compatible='1'
+commit firewall
+EOF

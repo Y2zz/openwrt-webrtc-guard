@@ -1,0 +1,13 @@
+{
+  "luci-app-webrtc-guard": {
+    "description": "Configure WebRTC traffic guard",
+    "read": {
+      "uci": ["webrtc-guard"],
+      "file": { "/usr/libexec/webrtc-guard status": ["exec"] }
+    },
+    "write": {
+      "uci": ["webrtc-guard"],
+      "file": { "/usr/libexec/webrtc-guard apply": ["exec"] }
+    }
+  }
+}
