@@ -1,0 +1,100 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  package:
+    name: Check and package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Check sources and reproducible IPK
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            python3 tools/verify.py --tag "$GITHUB_REF_NAME"
+          else
+            python3 tools/verify.py
+          fi
+      - name: ShellCheck
+        run: |
+          shellcheck -s dash -e SC1091 \
+            package/luci-app-webrtc-guard/root/usr/libexec/webrtc-guard \
+            package/luci-app-webrtc-guard/root/etc/init.d/webrtc-guard \
+            package/luci-app-webrtc-guard/root/etc/uci-defaults/90-webrtc-guard
+      - name: Upload package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: webrtc-guard-package
+          path: |
+            dist/*.ipk
+            dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
+
+  integration:
+    name: OpenWrt 24.10.5 traffic tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Build IPK
+        run: python3 tools/build_ipk.py
+      - name: Run isolated OpenWrt tests
+        run: python3 tests/run_integration.py --report dist/integration-results.json
+      - name: Upload test evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: openwrt-test-evidence
+          path: |
+            dist/integration-results.json
+            dist/integration.log
+          if-no-files-found: warn
+          retention-days: 14
+
+  release:
+    name: Publish release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [package, integration]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: webrtc-guard-package
+          path: dist
+      - name: Verify release assets
+        working-directory: dist
+        run: sha256sum --check SHA256SUMS
+      - name: Publish IPK and checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            dist/*.ipk dist/SHA256SUMS \
+            --verify-tag --latest \
+            --title "WebRTC Guard $GITHUB_REF_NAME" \
+            --notes-file "docs/releases/$GITHUB_REF_NAME.md"

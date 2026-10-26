@@ -4,6 +4,17 @@
 
 本次使用 macOS ARM64 + Docker Linux VM。路由器容器使用官方 OpenWrt 24.10.5 armsr/armv8 rootfs；其用户态版本和修订号与目标固件一致，内核来自 Docker VM，不等同于路由器内核。
 
+## 自动运行
+
+在具有 Docker、Python 3、curl 的 Linux 或 macOS 电脑上，从项目根目录执行：
+
+```sh
+python3 tools/build_ipk.py
+python3 tests/run_integration.py --report dist/integration-results.json
+```
+
+脚本根据 Docker 架构选择官方 x86-64 或 ARM64 rootfs，与官方 SHA256 文件核对；创建独立 Docker 网络、路由器、客户端和回显服务；自动配置容器地址、运行测试并清理自己的资源。输出 JSON 测试结果和 `dist/integration.log`，不会连接实体路由器。首次运行需要下载 rootfs、软件包和 Alpine 镜像。GitHub Actions 调用同一个脚本。
+
 ## 测试环境准备
 
 以下命令从项目根目录执行，使用独立的测试容器名称。下载和 Docker 构建可在项目外的临时目录进行。

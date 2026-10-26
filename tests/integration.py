@@ -128,7 +128,7 @@ class Suite:
         self.configure()
 
         # Repeat an installation to exercise conffile preservation and idempotent hooks.
-        self.router("opkg", "install", "--force-reinstall", "/src/dist/luci-app-webrtc-guard_0.1.0-1_all.ipk")
+        self.router("opkg", "install", "--force-reinstall", self.args.ipk)
         self.check("重复安装保留已启用配置", self.state()["configured"] and self.state()["active"])
         # Exercise OpenWrt SDK's default_postinst ordering with the real library.
         self.router("sh", "-c", "cp /usr/lib/opkg/info/luci-app-webrtc-guard.postinst /usr/lib/opkg/info/luci-app-webrtc-guard.postinst-pkg; cp /src/package/luci-app-webrtc-guard/root/etc/uci-defaults/90-webrtc-guard /etc/uci-defaults/90-webrtc-guard; . /lib/functions.sh; default_postinst /usr/lib/opkg/info/luci-app-webrtc-guard.postinst")
@@ -139,7 +139,7 @@ class Suite:
         self.check("卸载清除专属 firewall include", self.router("uci", "get", "firewall.webrtc_guard", success=False).returncode != 0)
         self.check("卸载保留 fw4", self.router("nft", "list", "table", "inet", "fw4").returncode == 0)
         self.packet("卸载后 STUN 恢复可达", True, payload="stun")
-        self.router("opkg", "install", "/src/dist/luci-app-webrtc-guard_0.1.0-1_all.ipk")
+        self.router("opkg", "install", self.args.ipk)
         self.configure(enabled="0")
         return self.results
 
@@ -151,6 +151,7 @@ if __name__ == "__main__":
     parser.add_argument("--ipv4", required=True)
     parser.add_argument("--ipv6", default="fd42:7767::1")
     parser.add_argument("--mac", required=True)
+    parser.add_argument("--ipk", default="/src/dist/luci-app-webrtc-guard_0.1.0-1_all.ipk")
     parser.add_argument("--report", type=Path)
     args = parser.parse_args()
     suite = Suite(args)

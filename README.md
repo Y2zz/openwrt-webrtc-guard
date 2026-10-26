@@ -1,5 +1,7 @@
 # OpenWrt WebRTC 防护插件
 
+[![CI](https://github.com/Y2zz/openwrt-webrtc-guard/actions/workflows/ci.yml/badge.svg)](https://github.com/Y2zz/openwrt-webrtc-guard/actions/workflows/ci.yml)
+
 面向 **OpenWrt 24.10.5 / firewall4 / LuCI 24.10** 的首版插件，目标是减少 WebRTC 的 STUN 探测暴露出口 IP。包内只有 Shell、LuCI JavaScript 和配置文件，`Architecture: all`，不依赖 CPU 指令集。其他系统版本尚未验证。
 
 **路由器无法彻底关闭浏览器 WebRTC，也不能保证完全防止 IP 泄露。**
@@ -18,13 +20,13 @@
 
 ## 安装
 
-适用于使用 **opkg** 的 OpenWrt 24.10.5。从源码仓库获取项目后，先在电脑上的项目根目录生成安装包：
+适用于使用 **opkg** 的 OpenWrt 24.10.5。可以直接从 [GitHub Releases](https://github.com/Y2zz/openwrt-webrtc-guard/releases/latest) 下载 IPK 和 SHA256SUMS，并核对校验和；也可以从源码仓库获取项目后，在电脑上的项目根目录生成安装包：
 
 ```sh
 python3 tools/build_ipk.py
 ```
 
-再把 `dist/luci-app-webrtc-guard_0.1.0-1_all.ipk` 上传到路由器 `/tmp/`，在路由器执行：
+把下载或本地生成的 `luci-app-webrtc-guard_0.1.0-1_all.ipk` 上传到路由器 `/tmp/`，在路由器执行：
 
 ```sh
 opkg update
@@ -114,6 +116,18 @@ make package/luci-app-webrtc-guard/compile V=s
 ```
 
 SDK 构建使用标准 `package.mk`，无需把此项目放进 LuCI feeds；本地 Python 工具生成传统 opkg 格式包，不是 SDK 编译结果。升级安装保留 `/etc/config/webrtc-guard`。
+
+## GitHub Actions 与发布
+
+推送 `main`、创建 Pull Request 或手动触发 [CI](https://github.com/Y2zz/openwrt-webrtc-guard/actions/workflows/ci.yml) 后，自动检查源码语法、ShellCheck、IPK 内容及可复现性，并运行官方 OpenWrt 24.10.5 用户态容器的真实 IPv4/IPv6 报文测试。安装包、校验和及测试证据作为 Actions artifacts 保留 14 天。容器测试使用运行器宿主内核，不代替实体路由器验证。
+
+发布新版本时更新 `Makefile` 的 `PKG_VERSION`，添加对应的 `docs/releases/v版本号.md`，提交后推送 `v版本号` 标签。CI 会核对标签与版本号；全部必需检查通过后，自动发布 GitHub Release，附上 IPK 和 SHA256SUMS。普通分支和 Pull Request 不会发布版本。第三方 Actions 固定到提交 SHA，只有发布任务具有仓库内容写权限。
+
+```sh
+python3 tools/verify.py --tag v0.1.0
+git tag -a v0.1.0 -m 'WebRTC Guard v0.1.0'
+git push origin v0.1.0
+```
 
 ## 依据
 
