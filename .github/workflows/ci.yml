@@ -37,7 +37,7 @@ jobs:
             package/luci-app-webrtc-guard/root/etc/init.d/webrtc-guard \
             package/luci-app-webrtc-guard/root/etc/uci-defaults/90-webrtc-guard
       - name: Upload package
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: webrtc-guard-package
           path: |
@@ -60,7 +60,7 @@ jobs:
         run: python3 tests/run_integration.py --report dist/integration-results.json
       - name: Upload test evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: openwrt-test-evidence
           path: |
@@ -81,7 +81,7 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: webrtc-guard-package
           path: dist

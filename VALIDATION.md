@@ -32,10 +32,18 @@ DNS/NTP 项是相应端口的真实 UDP 收发验证，不是对完整 DNS/NTP �
 
 ## 尚未验证
 
-- 真实 nft flowtable 的运行时检测：容器宿主内核拒绝创建 flowtable，已明确跳过。UCI 软件/硬件卸载配置的检查已覆盖软件卸载启用的真实场景。
+- 本地 ARM64 容器未能创建真实 nft flowtable；此项随后在 GitHub Actions x86-64 运行器上验证通过，见下节。
 - 用户实体设备、用户 LuCI 补丁版本、OpenWrt 6.6 内核、设备重启后的完整启动过程。
 - 厂商 SFE/NSS 加速、其他代理/防火墙插件组合、二层直通、复杂 VLAN/桥接和硬件卸载。
 - 使用真实浏览器 ICE candidate 与真实公网 STUN/TURN 服务的泄露验收；没有证明完全不泄露真实 IP。
 - OpenWrt SDK 实际构建。当前 IPK 由随附 Python 工具打包；已使用真实 OpenWrt `default_postinst` 验证与 SDK 安装钩子顺序的兼容性。
 
 所有测试只在本地隔离容器运行，没有连接或修改用户路由器。
+
+## GitHub Actions 补充验证
+
+[首次 CI 运行](https://github.com/Y2zz/openwrt-webrtc-guard/actions/runs/40286706039)使用官方 OpenWrt 24.10.5 x86/64 rootfs，在 GitHub 托管的 Ubuntu 24.04 运行器中完成 **57 项检查，全部通过，无跳过**。该运行器的宿主内核为 6.17.0-1022-azure，支持真实 nft flowtable，验证了活动 flowtable 的检测和拒绝应用逻辑。
+
+rootfs SHA256 为 `fb3245bce37575f1fc9cc467909c37c5b12e49bf7993a34cd19893511bccf40e`，与官方下载的 SHA256 文件一致。LuCI 版本仍为 25.340.26705~d88390b。完整结果和环境信息见对应运行的 `openwrt-test-evidence` artifact。
+
+此后发布标签会重新运行全部检查，并从通过检查的同一次运行中取得 IPK 发布。测试仍基于用户态容器，不代表用户实体设备或 OpenWrt 原生内核验证。没有连接或修改用户路由器。
